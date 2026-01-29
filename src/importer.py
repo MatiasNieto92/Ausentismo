@@ -55,23 +55,23 @@ def import_roster(file_path):
                     update_sql = """
                     UPDATE agents SET
                         acdid = ?, payroll_number = ?, last_name = ?, first_name = ?,
-                        mail = ?, rut = ?, site = ?, scheduled_hours = ?,
+                        mail = ?, rut = ?, site = ?, lob = ?, scheduled_hours = ?,
                         raw_row_json = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE agent_id = ?
                     """
                     cursor.execute(update_sql, (
-                        acdid, payroll, last_name, first_name, mail, rut, site,
+                        acdid, payroll, last_name, first_name, mail, rut, site, lob,
                         row.get(cols["scheduled_hours"], 0), raw_json, agent_id
                     ))
                 else:
                     insert_sql = """
                     INSERT INTO agents (
-                        acdid, payroll_number, last_name, first_name, mail, rut, site,
+                        acdid, payroll_number, last_name, first_name, mail, rut, site, lob,
                         scheduled_hours, raw_row_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
                     cursor.execute(insert_sql, (
-                        acdid, payroll, last_name, first_name, mail, rut, site,
+                        acdid, payroll, last_name, first_name, mail, rut, site, lob,
                         row.get(cols["scheduled_hours"], 0), raw_json
                     ))
 

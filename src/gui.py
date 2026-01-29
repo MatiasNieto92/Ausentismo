@@ -37,7 +37,12 @@ class AusentismoApp:
 
         report_menu = tk.Menu(menubar, tearoff=0)
         report_menu.add_command(label="Exportar Reporte Diario", command=self.export_report)
+        report_menu.add_command(label="Exportar Gráficos (PNG)", command=self.export_dashboard_png)
         menubar.add_cascade(label="Reportes", menu=report_menu)
+
+        config_menu = tk.Menu(menubar, tearoff=0)
+        config_menu.add_command(label="Configuración", command=self.show_config_win)
+        menubar.add_cascade(label="Herramientas", menu=config_menu)
 
         self.root.config(menu=menubar)
 
@@ -52,9 +57,10 @@ class AusentismoApp:
         self.date_entry = DateEntry(self.left_panel, date_pattern='y-mm-dd')
         self.date_entry.pack(fill="x", pady=5)
 
-        ttk.Label(self.left_panel, text="Site:").pack(anchor="w")
-        self.filter_site = ttk.Combobox(self.left_panel)
-        self.filter_site.pack(fill="x", pady=5)
+        ttk.Label(self.left_panel, text="Con Feedback:").pack(anchor="w")
+        self.filter_feedback = ttk.Combobox(self.left_panel, values=["Todos", "Si", "No"])
+        self.filter_feedback.pack(fill="x", pady=5)
+        self.filter_feedback.set("Todos")
 
         ttk.Label(self.left_panel, text="LOB:").pack(anchor="w")
         self.filter_lob = ttk.Combobox(self.left_panel)
@@ -104,6 +110,7 @@ class AusentismoApp:
                 messagebox.showerror("Error", f"Error al importar roster: {err}")
             else:
                 messagebox.showinfo("Éxito", f"Se importaron/actualizaron {count} agentes.")
+                self.update_filter_values()
 
     def load_login_logout(self):
         path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
@@ -126,20 +133,9 @@ class AusentismoApp:
     def update_filter_values(self):
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT site FROM agents")
-            sites = [r[0] for r in cursor.fetchall() if r[0]]
-            self.filter_site['values'] = ["Todos"] + sites
-
-            cursor.execute("SELECT DISTINCT mail FROM agents") # Usando mail como proxy si no hay LOB cargado
-            # En realidad el roster tiene LOB. Busquemos en el raw_json
-            cursor.execute("SELECT raw_row_json FROM agents LIMIT 100")
-            lobs = set()
-            for r in cursor.fetchall():
-                try:
-                    data = json.loads(r[0])
-                    if 'LOB' in data: lobs.add(data['LOB'])
-                except: pass
-            self.filter_lob['values'] = ["Todos"] + list(lobs)
+            cursor.execute("SELECT DISTINCT lob FROM agents")
+            lobs = [r[0] for r in cursor.fetchall() if r[0]]
+            self.filter_lob['values'] = ["Todos"] + lobs
 
     def run_process(self):
         date_str = self.date_entry.get()
@@ -160,32 +156,29 @@ class AusentismoApp:
             self.tree.delete(item)
 
         date_str = self.date_entry.get()
-        site_f = self.filter_site.get()
+        fb_f = self.filter_feedback.get()
         lob_f = self.filter_lob.get()
         status_f = self.filter_status.get()
 
         with get_connection() as conn:
             query = f"""
-                SELECT a.agent_id, a.first_name, a.last_name, a.site, e.status_code, e.status_detail, a.raw_row_json
+                SELECT a.agent_id, a.first_name, a.last_name, a.lob, e.status_code, e.status_detail,
+                (SELECT COUNT(*) FROM feedbacks f WHERE f.agent_id = a.agent_id AND f.date = '{date_str}') as has_fb
                 FROM agents a
                 LEFT JOIN attendance_events e ON a.agent_id = e.agent_id AND e.date = '{date_str}'
                 WHERE 1=1
             """
-            if site_f and site_f != "Todos":
-                query += f" AND a.site = '{site_f}'"
+            if lob_f and lob_f != "Todos":
+                query += f" AND a.lob = '{lob_f}'"
             if status_f and status_f != "Todos":
                 query += f" AND e.status_code = '{status_f}'"
 
-            df = pd.read_sql_query(query, conn)
+            if fb_f == "Si":
+                query += " AND has_fb > 0"
+            elif fb_f == "No":
+                query += " AND has_fb = 0"
 
-            # Filtro manual para LOB que está en raw_json
-            if lob_f and lob_f != "Todos":
-                def check_lob(row):
-                    try:
-                        data = json.loads(row['raw_row_json'])
-                        return data.get('LOB') == lob_f
-                    except: return False
-                df = df[df.apply(check_lob, axis=1)]
+            df = pd.read_sql_query(query, conn)
 
             for _, row in df.iterrows():
                 self.tree.insert("", "end", values=(
@@ -208,10 +201,12 @@ class AusentismoApp:
             if widget.winfo_name() != "!label": # Mantener el título
                 widget.destroy()
 
+        date_str = self.date_entry.get()
         ttk.Label(self.right_panel, text=f"Agente ID: {agent_id}").pack(pady=5)
+        ttk.Label(self.right_panel, text=f"Fecha: {date_str}", font=("Arial", 10, "italic")).pack(pady=2)
 
         ttk.Label(self.right_panel, text="Tipo de Feedback:").pack(anchor="w")
-        self.fb_type = ttk.Combobox(self.right_panel, values=["LOA", "BAJA", "PSG", "PCG", "Salud", "Personal"])
+        self.fb_type = ttk.Combobox(self.right_panel, values=["VAC", "LOA", "BAJA", "PSG", "PCG", "P. Personales", "P. Salud", "Sin Herramientas"])
         self.fb_type.pack(fill="x", pady=5)
 
         ttk.Label(self.right_panel, text="Notas:").pack(anchor="w")
@@ -335,6 +330,33 @@ class AusentismoApp:
         canvas = FigureCanvasTkAgg(fig, master=self.tab_dashboard)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def show_config_win(self):
+        config_win = tk.Toplevel(self.root)
+        config_win.title("Configuración")
+        config_win.geometry("300x200")
+
+        ttk.Label(config_win, text="Umbral de presencia (min):").pack(pady=10)
+        val_var = tk.StringVar(value=str(self.config.get("presence_threshold_minutes", 30)))
+        entry = ttk.Entry(config_win, textvariable=val_var)
+        entry.pack(pady=5)
+
+        def save():
+            try:
+                self.config["presence_threshold_minutes"] = int(val_var.get())
+                save_config(self.config)
+                messagebox.showinfo("Éxito", "Configuración guardada.")
+                config_win.destroy()
+            except:
+                messagebox.showerror("Error", "Ingrese un número válido.")
+
+        ttk.Button(config_win, text="Guardar", command=save).pack(pady=20)
+
+    def export_dashboard_png(self):
+        path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG files", "*.png")])
+        if path and hasattr(self, 'current_fig'):
+            self.current_fig.savefig(path)
+            messagebox.showinfo("Éxito", f"Imagen guardada en {path}")
 
     def export_report(self):
         date_str = self.date_entry.get()

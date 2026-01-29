@@ -22,6 +22,7 @@ def init_db():
       mail TEXT,
       rut TEXT,
       site TEXT,
+      lob TEXT,
       status TEXT,
       hire_date TEXT,
       scheduled_hours REAL,
